@@ -467,6 +467,7 @@ class Candidate:
     notes: str = ""  # the model's list of differences, written before its code
     visible_tokens: int = 0  # output tokens of the reply that wrote it, reasoning excluded
     shots: list[bytes] = field(default_factory=list)  # the two level side views as the judge sees them, uncropped (kept for judge_pick)
+    uneven: bool = False  # the model's module scales the whole object unevenly (see uneven_scale)
 
 
 @dataclass
@@ -726,6 +727,8 @@ class Pipeline:
         call = Call(CRITIQUE_ID + 10, SOL, self.instructions, [{"type": "input_text", "text": text}, self.target, *self.closeup],
                     "high", GENERATE_MAX_OUTPUT)
         merged = self.modules(pool, [call], ["dm"])[0]
+        if merged is not None and merged.uneven and not picked.uneven:  # uniform scale only
+            return picked
         return merged if merged is not None else picked
 
     def fit_rest(self, base: list[Step], index: int, module: Candidate) -> list[Step]:
@@ -799,6 +802,8 @@ class Pipeline:
         view (child shown first). The child stays unless the parent's mean penalty is lower by more than the judge's draw
         threshold; with no usable reply the parent stays."""
         if len(parent.shots) < 2 or len(child.shots) < 2:
+            return False
+        if child.uneven and not parent.uneven:  # uniform scale only: the even parent stays
             return False
         image = lambda b: {"type": "input_image", "image_url": data_url(b), "detail": "high"}
         asks = ((parent.shots[0], child.shots[0], "slightly left of the front", True),
@@ -1011,6 +1016,7 @@ class Pipeline:
         except RenderRejected as rejection:
             return source, rejection.detail_json
         candidate = Candidate(name, source, view_sheet(views), grid, raw, views)
+        candidate.uneven = uneven_scale(raw)
         if self.keep_shots:
             candidate.shots = judge_shots(front)[:2]
         if self.photo is not None:
@@ -1293,6 +1299,11 @@ class Pipeline:
                     steps = self.fit_plan(steps, survivors[0])
                 self.best_so_far = survivors[0].source
             winner = self.select(pool, survivors, set(), 1, FINAL_SELECT_ID)[0]
+            even = winner
+            while even.uneven and even.parent is not None:  # uniform scale only: the last even module in the lineage
+                even = even.parent
+            if not even.uneven:
+                winner = even
             self.best_so_far = winner.source
             for index in range(len(plan.steps), len(plan.steps) + plan.post_pick_steps):
                 kept = self.post_pick(pool, winner, index, plan.post_pick_effort)
@@ -1333,6 +1344,7 @@ class Pipeline:
 
     def drafts_kept(self, pool: ThreadPoolExecutor, drafts: list[Candidate], plan: StagePlan) -> list[Candidate]:
         ordered = self.select(pool, drafts, set(), len(drafts) - 1 if plan.draft_each_start and len(drafts) > plan.draft_keep else plan.draft_keep, SELECT_ID, faults=True)
+        ordered = [d for d in ordered if not d.uneven] + [d for d in ordered if d.uneven]  # uniform scale only: even drafts first
         if not plan.draft_each_start or len(drafts) <= plan.draft_keep:
             return ordered
         kept, starts = [], set()
@@ -1492,6 +1504,49 @@ PATCH_FLOOR = 0.4  # the least a patch-edit reply is taken to cost, as a share o
 PATCH_PRIOR = 0.6  # that share before any patch-edit reply of this prompt has been seen
 MERGE_COST = (748, 11000)  # a round's merge call: reasoning tokens, and input tokens besides the two modules
 SELECT_EXTRA_CREDITS = 12000  # a third candidate in the round's two selection calls
+
+
+_NUM = r"-?\d+(?:\.\d+)?(?:e-?\d+)?"
+
+
+def uneven_scale(raw: str) -> bool:
+    """Whether the model's module scales the whole object unevenly: a scale with unequal axes on the returned group or on
+    the chain of groups that holds the whole object (each the only child of the one before)."""
+    if not raw:
+        return False
+    top = "root"
+    start = raw.find("export default function")
+    if start >= 0 and raw.find("{", start) >= 0:
+        opened = raw.find("{", start)
+        depth, end = 0, len(raw)
+        for at in range(opened, len(raw)):  # the body of generate(): braces matched (strings with braces are rare here)
+            if raw[at] == "{":
+                depth += 1
+            elif raw[at] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = at
+                    break
+        returned = re.findall(r"\breturn\s+([A-Za-z_$][\w$]*)\s*;", raw[opened:end])
+        top = returned[-1] if returned else top
+    kids: dict[str, list[str]] = {}
+    for parent, args in re.findall(r"\b([A-Za-z_$][\w$]*)\.add\(([^()]*(?:\([^()]*\)[^()]*)*)\)", raw):
+        for arg in args.split(","):
+            arg = arg.strip()
+            kids.setdefault(parent, []).append(arg if re.fullmatch(r"[A-Za-z_$][\w$]*", arg) else "<expr>")
+    chain, name = [top], top
+    while len(kids.get(name, [])) == 1 and kids[name][0] != "<expr>" and len(chain) < 6:
+        name = kids[name][0]
+        chain.append(name)
+    for name in chain:
+        n = re.escape(name)
+        if re.search(rf"\b{n}\.scale\.[xyz]\s*=(?!=)", raw):
+            return True  # one axis set on its own is uneven unless all three are set to the same number
+        for args in re.findall(rf"\b{n}\.scale\.set\(([^()]*)\)", raw):
+            values = [a.strip() for a in args.split(",")]
+            if len(values) == 3 and len(set(values)) > 1:
+                return True
+    return False
 
 
 def judge_shots(front: bytes) -> list[bytes]:

@@ -82,7 +82,10 @@ its natural orientation, as it stands or rests on a level surface, with the side
   built as worn or hung, front toward +Z: a necklace or pendant hangs with the pendant at the bottom and the chain
   rising from it in the drape the photo shows; a ring or watch stands upright with its stone or face toward +Z.
 - Never rotate, tilt, lean or turn the whole object to match the photo's camera angle or to show more of it to the
-  cameras, and add no rotation to the returned object; nothing is rotated afterwards."""
+  cameras, and add no rotation to the returned object; nothing is rotated afterwards.
+- Scale only uniformly: set each part's proportions in its own geometry, never with a non-uniform scale on the whole
+  object or on a group that holds the whole object. Keep the real proportions: never stretch, squash or offset the
+  object to look bigger or closer in the views."""
 
 _GUIDANCE_CHAIN = """## How to build it
 
