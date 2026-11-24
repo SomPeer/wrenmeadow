@@ -221,6 +221,9 @@ REWRITE_FOCUS = {
                "repeated part. Keep the pose and proportions as they are.",
     "materials": "\n\nIn this rewrite, spend your effort on item 4: colors, materials, surface patterns and depth of tone, "
                  "so each part looks made of what the photo shows. Keep the geometry as it is.",
+    "invented": "\n\nIn this rewrite, compare every part with the photo and remove what the photo does not show: extra ribs, "
+                "flutes, slats, grooves, rings, seams, studs or ornaments, and surface noise, speckles or scratches on a surface "
+                "the photo shows smooth. Remove only those; keep every other part, count and color, and the pose, as they are.",
 }
 
 REFINE_FOCUS = {
